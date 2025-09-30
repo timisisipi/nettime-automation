@@ -263,28 +263,58 @@ def pick_sin_incidencia(page):
         raise RuntimeError("No pude seleccionar 'Sin incidencia'.")
 
 def try_confirm(page):
-    # Spanish/English variants commonly used
-    for name in [
-        r"^Guardar$", r"^Aceptar$", r"^Confirmar$",
-        r"^Save$", r"^OK$", r"^Confirm$",
-        r"^Registrar$", r"^Marcar$", r"^Clock(ing)?$"
-    ]:
+    log("Looking for Guardar/Save button…")
+
+    # Make sure the footer is in view (some layouts keep it off-screen)
+    try:
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+    except Exception:
+        pass
+    try:
+        page.locator("div.c-fixed-down, .footer-container").first.wait_for(state="visible", timeout=3000)
+    except Exception:
+        pass
+
+    # Multiple strategies: role+name, CSS in footer, span -> button ancestor, force-click
+    selectors = [
+        lambda: page.get_by_role("button", name=re.compile(r"^(Guardar|Save)$", re.I)).first,
+        lambda: page.locator("div.c-fixed-down .footer-container button.btn.btn-sm.btn-primary").first,
+        lambda: page.locator("button.btn-primary:has-text('Guardar'), button.btn-primary:has-text('Save')").first,
+        lambda: page.locator("span:has-text('Guardar'), span:has-text('Save')").locator("xpath=ancestor::button[1]").first,
+    ]
+
+    clicked = False
+    for make in selectors:
         try:
-            btn = page.get_by_role("button", name=re.compile(name, re.I))
-            if btn.is_visible(timeout=1000) and btn.is_enabled():
-                log(f"Clicking confirmation button: {name.strip('^$')}")
-                btn.scroll_into_view_if_needed(timeout=1000)
-                try:
-                    btn.click(timeout=2000)
-                except Exception:
-                    btn.click(timeout=2000, force=True)
-                page.wait_for_load_state("networkidle", timeout=TIMEOUT)
-                # optional: wait a breath for any toast
-                page.wait_for_timeout(800)
-                return
+            btn = make()
+            btn.scroll_into_view_if_needed(timeout=1500)
+            try:
+                btn.click(timeout=2000)
+            except Exception:
+                btn.click(timeout=2000, force=True)
+            clicked = True
+            log("Clicked Guardar/Save.")
+            break
         except Exception:
             continue
-    log("No visible 'Guardar/Save' button found; assuming selection auto-applied.")
+
+    if not clicked:
+        raise RuntimeError("Couldn’t find the Guardar/Save button.")
+
+    # Give the app a moment to process and try to detect success
+    page.wait_for_load_state("networkidle", timeout=TIMEOUT)
+    page.wait_for_timeout(800)
+
+    # Heuristic: look for any success hint in ES/EN
+    try:
+        page.get_by_text(re.compile(
+            r"(Marcaje|Registrad|Guardad|éxito|Correctamente|Saved|Success|Schedule)",
+            re.I
+        )).first.wait_for(state="visible", timeout=3000)
+        log("Success message detected.")
+    except Exception:
+        log("No explicit success message; assuming save went through.")
+
 
 def main():
     if not USERNAME or not PASSWORD:
