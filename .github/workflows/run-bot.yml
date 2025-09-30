@@ -2,11 +2,20 @@ name: nettime-clicks
 
 on:
   schedule:
-    # CEST (UTC+2) targets -> UTC: 07,11,12,16
+    # CEST (UTC+2) -> 09,13,14,18  ==> UTC: 07,11,12,16
     - cron: "0 7,11,12,16 * * *"
-    # CET (UTC+1) targets -> UTC: 08,12,13,17
+    # CET (UTC+1) -> 09,13,14,18  ==> UTC: 08,12,13,17
     - cron: "0 8,12,13,17 * * *"
   workflow_dispatch:
+    inputs:
+      run_guard:
+        description: "Hour guard (1=only Madrid hours, 0=run now)"
+        required: true
+        default: "1"
+      headless:
+        description: "Headless browser (1=headless, 0=visible—ignored on Actions)"
+        required: true
+        default: "1"
 
 jobs:
   run:
@@ -26,13 +35,14 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           BOT_USER: ${{ secrets.BOT_USER }}
           BOT_PASS: ${{ secrets.BOT_PASS }}
-          HEADLESS: "1"
-          RUN_GUARD: "1"   # ensures we only execute at 09:00, 13:00, 14:00, 18:00 Europe/Madrid
+          HEADLESS: ${{ inputs.headless || '1' }}
+          RUN_GUARD: ${{ inputs.run_guard || '1' }}
         run: python bot.py
 
-      - name: Upload screenshots on failure
-        if: failure()
+      - name: Upload screenshots (any *.png)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-shots
+          name: screenshots
           path: "*.png"
+
