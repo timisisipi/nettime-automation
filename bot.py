@@ -201,14 +201,15 @@ def go_to_remote_clocking(page):
         except Exception:
             pass
 
-def pick_standard_time_worked(page):
-    log("Opening 'Schedule' dropdown…")
+def pick_sin_incidencia(page):
+    log("Opening 'Horario' dropdown…")
+    # Open the combobox
     opened = False
     for f in [
         lambda: page.get_by_role("combobox").first,
         lambda: page.locator("div[role='combobox']").first,
-        lambda: page.get_by_text(re.compile(r"^Select an item|\bSeleccionar un elemento\b|Seleccionar un ítem", re.I)).first,
-        lambda: page.locator("div:has-text('Schedule'), div:has-text('Horario')").locator("div").first,
+        lambda: page.get_by_text(re.compile(r"^Seleccione un elemento|Select an item", re.I)).first,
+        lambda: page.locator("div:has-text('Horario')").locator("div").first,
     ]:
         try:
             f().click(timeout=3000)
@@ -217,39 +218,73 @@ def pick_standard_time_worked(page):
         except Exception:
             continue
     if not opened:
-        raise RuntimeError("Could not open the Schedule dropdown.")
+        raise RuntimeError("No pude abrir el desplegable de Horario.")
 
-    log("Selecting 'Standard Time Worked'…")
+    log("Selecting 'Sin incidencia'…")
+    # Try direct hit first
+    targets = [
+        lambda: page.get_by_role("option", name=re.compile(r"^\s*Sin incidencia\s*$", re.I)),
+        lambda: page.get_by_text(re.compile(r"^\s*Sin incidencia\s*$", re.I)).first,
+        lambda: page.locator("li,div,span").filter(has_text=re.compile(r"^\s*Sin incidencia\s*$", re.I)).first,
+    ]
     selected = False
-    for f in [
-        lambda: page.get_by_role("option", name=re.compile(r"Standard Time Worked", re.I)),
-        lambda: page.get_by_text(re.compile(r"^\s*Standard Time Worked\s*$", re.I)).first,
-        # Spanish instances sometimes list just a single 'Trabajo estándar' – leave English first per your screenshot
-        lambda: page.get_by_text(re.compile(r"Trabajo estándar|Tiempo estándar", re.I)).first,
-        lambda: page.locator("li,div,span").filter(has_text=re.compile(r"Standard Time Worked|Trabajo estándar|Tiempo estándar", re.I)).first,
-    ]:
+    for t in targets:
         try:
-            f().click(timeout=3000)
+            t().click(timeout=2000)
             selected = True
             break
         except Exception:
             continue
+
+    # If not visible on page 1, use the built-in search or go to page 2
     if not selected:
-        raise RuntimeError("Could not select 'Standard Time Worked'.")
+        log("Not on first page; trying the search box…")
+        try:
+            search = page.locator("input[type='text']").filter(
+                has_not=page.locator("input[type='password']")
+            ).nth(0)
+            search.fill("Sin incidencia", timeout=2000)
+            page.wait_for_timeout(500)
+            page.get_by_text(re.compile(r"^\s*Sin incidencia\s*$", re.I)).first.click(timeout=3000)
+            selected = True
+        except Exception:
+            pass
+
+    if not selected:
+        log("Trying pagination → page 2…")
+        try:
+            page.get_by_text(re.compile(r"^\s*2\s*$")).click(timeout=2000)
+            page.get_by_text(re.compile(r"^\s*Sin incidencia\s*$", re.I)).first.click(timeout=3000)
+            selected = True
+        except Exception:
+            pass
+
+    if not selected:
+        raise RuntimeError("No pude seleccionar 'Sin incidencia'.")
 
 def try_confirm(page):
-    # Many setups auto-apply on selection; others need an explicit confirm/mark.
-    for name in [r"^Confirm(ar)?$", r"^Save$", r"^OK$", r"^Register$", r"^Mark(ing)?$", r"^Aceptar$",
-                 r"^Submit$", r"^Guardar$"]:
+    # Spanish/English variants commonly used
+    for name in [
+        r"^Guardar$", r"^Aceptar$", r"^Confirmar$",
+        r"^Save$", r"^OK$", r"^Confirm$",
+        r"^Registrar$", r"^Marcar$", r"^Clock(ing)?$"
+    ]:
         try:
             btn = page.get_by_role("button", name=re.compile(name, re.I))
             if btn.is_visible(timeout=1000) and btn.is_enabled():
                 log(f"Clicking confirmation button: {name.strip('^$')}")
-                btn.click(timeout=3000)
+                btn.scroll_into_view_if_needed(timeout=1000)
+                try:
+                    btn.click(timeout=2000)
+                except Exception:
+                    btn.click(timeout=2000, force=True)
                 page.wait_for_load_state("networkidle", timeout=TIMEOUT)
-                break
+                # optional: wait a breath for any toast
+                page.wait_for_timeout(800)
+                return
         except Exception:
             continue
+    log("No visible 'Guardar/Save' button found; assuming selection auto-applied.")
 
 def main():
     if not USERNAME or not PASSWORD:
@@ -266,7 +301,7 @@ def main():
         try:
             login(page)
             go_to_remote_clocking(page)
-            pick_standard_time_worked(page)
+            pick_sin_incidencia(page)
             try_confirm(page)
             shot = f"success_{int(time.time())}.png"
             page.screenshot(path=shot, full_page=True)
