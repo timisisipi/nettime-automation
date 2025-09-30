@@ -77,16 +77,14 @@ def click_first_that_works(ctx, candidates, what):
 def login(page):
     log("Opening login page…")
     goto(page, BASE_URL)
-    # If the app already redirected into the portal, continue
+
     if not re.search(r"login", page.url, re.I):
         log(f"Already past login (URL: {page.url}).")
         return
 
-    # Work inside page or frame
     ctx = find_login_frame(page)
 
-    log("Filling credentials (ES/EN + placeholder/name fallbacks)…")
-
+    log("Filling credentials…")
     fill_first_that_works(ctx, [
         lambda c: c.get_by_label(re.compile(r"^(Usuario|User)$", re.I)),
         lambda c: c.locator("input[placeholder*='Usuario' i], input[placeholder*='User' i]").first,
@@ -94,25 +92,99 @@ def login(page):
         lambda c: c.locator("input[type='text'], input[type='email']").first,
     ], USERNAME, "username")
 
-    fill_first_that_works(ctx, [
+    pwd = [
         lambda c: c.get_by_label(re.compile(r"^(Contraseña|Password)$", re.I)),
         lambda c: c.locator("input[placeholder*='Contraseña' i], input[placeholder*='Password' i]").first,
         lambda c: c.locator("input[name='password'], #password").first,
         lambda c: c.locator("input[type='password']").first,
-    ], PASSWORD, "password")
+    ]
+    fill_first_that_works(ctx, pwd, PASSWORD, "password")
 
-    click_first_that_works(ctx, [
+    # Log console events to the action logs (helps diagnose IP blocks / JS errors)
+    page.on("console", lambda m: print(f"[console] {m.type}: {m.text}", flush=True))
+
+    # Locate the login button once
+    btn_candidates = [
         lambda c: c.get_by_role("button", name=re.compile(r"^Login$", re.I)),
         lambda c: c.get_by_text(re.compile(r"^\s*Login\s*$", re.I)),
         lambda c: c.locator("button[type='submit']").first,
         lambda c: c.locator("input[type='submit']").first,
         lambda c: c.locator("button").filter(has_text=re.compile(r"login", re.I)).first,
-    ], "Login")
+    ]
+    button = None
+    for make in btn_candidates:
+        try:
+            b = make(ctx)
+            b.wait_for(state="visible", timeout=3000)
+            button = b
+            break
+        except Exception:
+            continue
+    if not button:
+        raise RuntimeError("Login button not found")
 
-    page.wait_for_load_state("networkidle", timeout=TIMEOUT)
+    # 1) Normal click (with scroll into view). If blocked, force click.
+    try:
+        button.scroll_into_view_if_needed(timeout=2000)
+        try:
+            button.click(timeout=3000)
+            log("Clicked Login (normal).")
+        except Exception:
+            button.click(timeout=3000, force=True)
+            log("Clicked Login (force).")
+    except Exception as e:
+        log(f"Login button click failed: {e}")
+
+    # Wait for either success OR an error/remaining-on-page
+    page.wait_for_timeout(1500)  # give spinner a moment
     if re.search(r"login", page.url, re.I):
-        # Some builds show an inline error; screenshot will reveal it
+        log("Still on login after normal click. Trying ENTER on password field…")
+        # 2) Press Enter in password field
+        try:
+            # Re-find password field and press Enter
+            pass_el = None
+            for make in pwd:
+                try:
+                    pass_el = make(ctx); pass_el.wait_for(state="visible", timeout=1000); break
+                except Exception: continue
+            if pass_el:
+                pass_el.press("Enter", timeout=2000)
+                page.wait_for_timeout(1500)
+        except Exception as e:
+            log(f"Enter submit failed: {e}")
+
+    if re.search(r"login", page.url, re.I):
+        log("Still on login after ENTER. Trying JS click on form submit…")
+        # 3) JS dispatch click/submit
+        try:
+            ctx.evaluate("""
+                () => {
+                  const btn = document.querySelector("button[type='submit'],input[type='submit']");
+                  if (btn) { btn.click(); }
+                  const frm = btn ? btn.closest('form') : document.querySelector('form');
+                  if (frm) { frm.dispatchEvent(new Event('submit', {bubbles:true,cancelable:true})); }
+                }
+            """)
+            page.wait_for_timeout(1500)
+        except Exception as e:
+            log(f"JS submit failed: {e}")
+
+    # Final wait and verdict
+    page.wait_for_load_state("networkidle", timeout=TIMEOUT)
+    log(f"Post-submit URL: {page.url}")
+
+    # If still on login, try to detect visible error text
+    if re.search(r"login", page.url, re.I):
+        try:
+            err = ctx.locator("*, .error, .alert, .validation").filter(
+                has_text=re.compile(r"(error|incorrect|inválid|usuario|contraseñ|denegad|permitid)", re.I)
+            ).first
+            if err and err.is_visible(timeout=1000):
+                log(f"Login message: {err.inner_text()}")
+        except Exception:
+            pass
         raise RuntimeError("Still on login page after submitting credentials.")
+
 
 def go_to_remote_clocking(page):
     u = urlparse(BASE_URL)
