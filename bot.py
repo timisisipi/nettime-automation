@@ -31,6 +31,30 @@ def guard_for_timezone():
     except Exception as e:
         log(f"Timezone guard failed ({e}); continuing.")
 
+def guard_business_rules():
+    """Skip runs when paused, on weekends, or on listed holidays (Europe/Madrid)."""
+    # 1) Global pause switch
+    if os.getenv("BOT_PAUSE", "0") == "1":
+        log("BOT_PAUSE=1 → skipping all runs.")
+        raise SystemExitWithScreenshot(0, "paused")
+
+    # 2) Weekends / holidays
+    try:
+        import pytz
+        from datetime import datetime as dt, date
+        tz = pytz.timezone("Europe/Madrid")
+        now = dt.now(tz)
+        if now.weekday() >= 5:  # 5=Sat, 6=Sun
+            log("Weekend in Europe/Madrid → skipping.")
+            raise SystemExitWithScreenshot(0, "weekend")
+        holos = {d.strip() for d in os.getenv("BOT_HOLIDAYS", "").split(",") if d.strip()}
+        today = now.date().isoformat()  # YYYY-MM-DD
+        if today in holos:
+            log(f"Holiday {today} in BOT_HOLIDAYS → skipping.")
+            raise SystemExitWithScreenshot(0, "holiday")
+    except Exception as e:
+        log(f"Business-rule guard warning: {e} (continuing)")
+
 class SystemExitWithScreenshot(Exception):
     def __init__(self, code, label="exit"):
         self.code = code
@@ -322,6 +346,8 @@ def main():
         raise SystemExitWithScreenshot(2, "missing_env")
 
     guard_for_timezone()
+    guard_for_timezone()
+    guard_business_rules()
 
     with sync_playwright() as p:
         context = p.chromium.launch(headless=HEADLESS, args=[

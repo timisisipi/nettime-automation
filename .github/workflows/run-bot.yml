@@ -3,9 +3,9 @@ name: nettime-clicks
 on:
   schedule:
     # CEST (UTC+2) -> 09,13,14,18  ==> UTC: 07,11,12,16
-    - cron: "0 7,11,12,16 * * *"
+    - cron: "0 7,11,12,16 * * 1-5"
     # CET (UTC+1) -> 09,13,14,18  ==> UTC: 08,12,13,17
-    - cron: "0 8,12,13,17 * * *"
+    - cron: "0 8,12,13,17 * * 1-5"
   workflow_dispatch:
     inputs:
       run_guard:
@@ -37,6 +37,8 @@ jobs:
           BOT_PASS: ${{ secrets.BOT_PASS }}
           HEADLESS: ${{ inputs.headless || '1' }}
           RUN_GUARD: ${{ inputs.run_guard || '1' }}
+          BOT_PAUSE: ${{ vars.BOT_PAUSE || '0' }}           # 1 = skip all runs
+          BOT_HOLIDAYS: ${{ vars.BOT_HOLIDAYS || '2025-12-08' }}      # e.g. "2025-10-01,2025-12-25"
         run: python bot.py
 
       - name: Upload screenshots (any *.png)
