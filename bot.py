@@ -346,7 +346,6 @@ def main():
         raise SystemExitWithScreenshot(2, "missing_env")
 
     guard_for_timezone()
-    guard_for_timezone()
     guard_business_rules()
 
     with sync_playwright() as p:
